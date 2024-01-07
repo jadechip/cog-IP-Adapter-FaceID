@@ -9,7 +9,9 @@ from PIL import Image
 from typing import List
 from insightface.app import FaceAnalysis
 from ip_adapter.ip_adapter_faceid import IPAdapterFaceID
-from diffusers import StableDiffusionPipeline, DDIMScheduler, AutoencoderKL
+from diffusers import StableDiffusionPipeline, StableDiffusionControlNetPipeline, DDIMScheduler, AutoencoderKL, ControlNetModel
+from diffusers.utils import load_image
+
 
 base_model_path = "SG161222/Realistic_Vision_V4.0_noVAE"
 base_cache = "model-cache"
@@ -40,8 +42,14 @@ class Predictor(BasePredictor):
         vae = AutoencoderKL.from_pretrained(
             vae_model_path
         ).to(dtype=torch.float16)
-        pipe = StableDiffusionPipeline.from_pretrained(
+
+        controlnet = ControlNetModel.from_pretrained(
+            "lllyasviel/sd-controlnet-openpose", torch_dtype=torch.float16
+        )
+
+        pipe = StableDiffusionControlNetPipeline.from_pretrained(
             base_model_path,
+            controlnet=controlnet,
             torch_dtype=torch.float16,
             scheduler=noise_scheduler,
             vae=vae,
@@ -49,6 +57,7 @@ class Predictor(BasePredictor):
             safety_checker=None,
             cache_dir=base_cache,
         )
+
         self.pipe = pipe.to(device)
         # IP adapter
         self.ip_model = IPAdapterFaceID(
@@ -110,17 +119,22 @@ class Predictor(BasePredictor):
         faces = self.app.get(image)
 
         faceid_embeds = torch.from_numpy(faces[0].normed_embedding).unsqueeze(0)
+        
+        controlnet_image = load_image("pose.png")
 
         images = self.ip_model.generate(
             prompt=prompt,
+            image=controlnet_image,
             negative_prompt=negative_prompt,
             faceid_embeds=faceid_embeds,
             num_samples=num_outputs,
             width=width,
             height=height,
             num_inference_steps=num_inference_steps,
+            controlnet_conditioning_scale=0.6,
             seed=seed
         )
+
 
         output_paths = []
         for i, image in enumerate(images):
